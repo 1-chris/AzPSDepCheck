@@ -52,30 +52,39 @@ foreach ($sub in $subscriptions) {
         }
     }
 
-    # $azureFunctions = Get-AzFunctionApp | Where-Object {$_.Runtime -eq 'PowerShell'}
+    $azureFunctions = Get-AzFunctionApp | Where-Object {$_.Runtime -eq 'PowerShell'}
 
-    # foreach ($func in $azureFunctions) {
-    #     $filePath = "/home/site/wwwroot/requirements.psd1"
-    #     $publishingProfile = Get-AzWebAppPublishingProfile -ResourceGroupName $func.ResourceGroupName -Name $func.RepositorySiteName
-    #     $base64Auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(($publishingProfile[0].UserName + ":" + $publishingProfile[0].UserPassword)))
-    #     $apiUrl = "https://$($func.RepositorySiteName).scm.azurewebsites.net/api/vfs$filePath"
+    $token = (Get-AzAccessToken).Token
+    foreach ($func in $azureFunctions) {
+        # Get the access token
 
-    #     $response = Invoke-RestMethod -Uri $apiUrl -Headers @{Authorization=("Basic {0}" -f $base64Auth)} -Method Get
+        # Specify the header for the subsequent REST call
+        $authHeader = @{
+            'Content-Type'='application/json'
+            'Authorization'='Bearer ' + $token
+        }
 
-    #     foreach ($item in $response.Keys) {
-    #         $value = $response[$item]
-    #         if ($value -notcontains '*') {
-    #             $onlineModule = Find-Module -Name $item
-    #             if ($onlineModule.Version -notlike $value) {
-    #                 $report += [PSCustomObject]@{
-    #                     ItemName = "$($sub.Name)/$($rb.ResourceGroupName)/$($rb.AutomationAccountName) Module: $($item)"
-    #                     Type = "FunctionModule"
-    #                     Problem = "Function App Module may be outdated. Current: $($value) PSGallery: $($onlineModule.Version)"
-    #                 }
-    #             }
-    #         }
-    #     }
-    # }
+        $url = "https://management.azure.com/subscriptions/$($sub.Id)/resourceGroups/$($func.ResourceGroupName)/providers/Microsoft.Web/sites/$($func.Name)/hostruntime/admin/vfs//requirements.psd1?relativePath=1&api-version=2018-11-01"
+        $response = Invoke-RestMethod -Uri $url -Headers $authHeader -Method GET -UseBasicParsing
+        $text = $response
+
+        $requirements = [scriptblock]::Create($text).Invoke()
+        $requirements
+        foreach ($item in $requirements.Keys) {
+            $value = $response[$item]
+            if ($value -notcontains '*') {
+                $onlineModule = Find-Module -Name $item
+                if ($onlineModule.Version -notlike $value) {
+                    $report += [PSCustomObject]@{
+                        ItemName = "$($sub.Name)/$($func.ResourceGroupName)/$($func.Name) Module: $($item)"
+                        Type = "FunctionModule"
+                        Problem = "Function App Module may be outdated. Current: $($value) PSGallery: $($onlineModule.Version)"
+                    }
+                }
+            }
+        }
+
+    }
 
 }
 
