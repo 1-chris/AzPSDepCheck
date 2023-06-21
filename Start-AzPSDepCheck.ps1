@@ -1,6 +1,4 @@
 # local version
-
-
 Connect-AzAccount
 
 $report = @()
@@ -22,7 +20,7 @@ foreach ($sub in $subscriptions) {
         foreach ($rb in $runbooks) {
             Export-AzAutomationRunbook -ResourceGroupName $rb.ResourceGroupName -AutomationAccountName $rb.AutomationAccountName -Name $rb.Name -OutputFolder $exportTempPath
 
-            $content = Get-Content $exportTempPath\$($rb.Name).ps1
+            $content = Get-Content "$exportTempPath$($rb.Name).ps1"
             if ($content -contains "Get-AutomationConnection") {
                 $report += [PSCustomObject]@{
                     ItemName = "$($sub.Name)/$($rb.ResourceGroupName)/$($rb.AutomationAccountName)/$($rb.Name)"
@@ -55,37 +53,30 @@ foreach ($sub in $subscriptions) {
     $azureFunctions = Get-AzFunctionApp | Where-Object {$_.Runtime -eq 'PowerShell'}
 
     $token = (Get-AzAccessToken).Token
-    foreach ($func in $azureFunctions) {
-        # Get the access token
-
-        # Specify the header for the subsequent REST call
-        $authHeader = @{
-            'Content-Type'='application/json'
-            'Authorization'='Bearer ' + $token
-        }
-
-        $url = "https://management.azure.com/subscriptions/$($sub.Id)/resourceGroups/$($func.ResourceGroupName)/providers/Microsoft.Web/sites/$($func.Name)/hostruntime/admin/vfs//requirements.psd1?relativePath=1&api-version=2018-11-01"
-        $response = Invoke-RestMethod -Uri $url -Headers $authHeader -Method GET -UseBasicParsing
-        $text = $response
-
-        $requirements = [scriptblock]::Create($text).Invoke()
-        $requirements
-        foreach ($item in $requirements.Keys) {
-            $value = $response[$item]
-            if ($value -notcontains '*') {
-                $onlineModule = Find-Module -Name $item
-                if ($onlineModule.Version -notlike $value) {
-                    $report += [PSCustomObject]@{
-                        ItemName = "$($sub.Name)/$($func.ResourceGroupName)/$($func.Name) Module: $($item)"
-                        Type = "FunctionModule"
-                        Problem = "Function App Module may be outdated. Current: $($value) PSGallery: $($onlineModule.Version)"
-                    }
-                }
-            }
-        }
-
+    $authHeader = @{
+        "Content-Type" = "application/json"
+        "Authorization" = "Bearer $token"
     }
 
+    foreach ($func in $azureFunctions) {
+        $url = "https://management.azure.com/subscriptions/$($sub.Id)/resourceGroups/$($func.ResourceGroupName)/providers/Microsoft.Web/sites/$($func.Name)/hostruntime/admin/vfs//requirements.psd1?relativePath=1&api-version=2018-11-01"
+        $response = Invoke-RestMethod -Uri $url -Headers $authHeader -Method GET -UseBasicParsing
+
+        $requirements = [scriptblock]::Create($response).Invoke()
+
+        foreach ($item in $requirements.Keys) {
+            $value = $requirements[$item]
+            $onlineModule = Find-Module -Name $item
+            if ($onlineModule.Version -notlike $value) {
+                $report += [PSCustomObject]@{
+                    ItemName = "$($sub.Name)/$($func.ResourceGroupName)/$($func.Name) Module: $($item)"
+                    Type = "FunctionModule"
+                    Problem = "Function App Module may be outdated. Current: $($value) PSGallery: $($onlineModule.Version)"
+                }
+            }
+            
+        }
+    }
 }
 
 $report | Format-Table
